@@ -1,15 +1,22 @@
-# backend/main.py
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Annotated
 import google.generativeai as genai
+from google.generativeai.errors import APIError 
 import os
 from dotenv import load_dotenv
 import logging
 
-# Load environment variables from a .env file
+# Load environment variables from a .env file (e.g., GEMINI_API_KEY)
 load_dotenv()
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+# --- Gemini Client Setup ---
+# The client object is necessary for using the File API (upload/delete)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY environment variable not set.")
+
+client = genai.Client(api_key=GEMINI_API_KEY) 
 
 app = FastAPI()
 
@@ -17,74 +24,68 @@ app = FastAPI()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Enable CORS for communication with the React front-end
+# Enable CORS for communication with the React front-end (allows Vercel deployment)
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=["*"], # In production, restrict this to your Vercel URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 @app.post("/upload-and-translate/")
 async def upload_and_translate(
-    file: Annotated[UploadFile, File()],
-    prompt: Annotated[str, Form()]
+    file: Annotated[UploadFile, File()],
+    prompt: Annotated[str, Form()]
 ):
+    """
+    Handles file upload, uploads it to the Gemini File API, queries the model,
+    and then deletes the uploaded file.
+    """
+    uploaded_file = None
     try:
-        # Read uploaded file bytes directly; avoid using the File API upload
-        # which may trigger service endpoints that require additional parameters
-        # like `ragStoreName`. Passing the file as inline blob data avoids that.
+        # 1. Read uploaded file bytes
         file_bytes = await file.read()
+        
+        # 2. Upload file to the Gemini File API
+        logger.info("Uploading file to Gemini File API...")
+        uploaded_file = client.files.upload(
+            file=file_bytes,
+            display_name=file.filename,
+            mime_type=file.content_type
+        )
+        logger.info("File uploaded successfully: %s", uploaded_file.name)
+        
+        # --- Model Selection ---
+        # Use a model that supports documents (gemini-2.5-flash is a good default)
+        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash") 
+        model = client.models[model_name]
+        
+        # 3. Generate content using the uploaded file reference
+        logger.info("Generating content with model: %s", model_name)
+        
+        response = model.generate_content([
+            f"Given the content of this document, perform this task: {prompt}",
+            uploaded_file, # Use the file object as input
+        ])
 
-        # Choose a model that is known to be available on newer accounts. You can
-        # override this by setting the GEMINI_MODEL environment variable.
-        # Example: set GEMINI_MODEL=models/gemini-2.5-pro
-        desired_model = os.getenv("GEMINI_MODEL", "models/gemini-2.5-flash")
-
-        # Query available models and attempt to pick a supported one if the
-        # desired model is not available for this API key/account.
-        try:
-            available = [m.name for m in genai.list_models()]
-        except Exception:
-            available = []
-
-        if desired_model in available:
-            model_name = desired_model
-        else:
-            # Prefer a 2.5 flash/pro model if available, otherwise fall back to
-            # the first listed model.
-            fallback = None
-            for candidate in available:
-                if "2.5" in candidate and "flash" in candidate:
-                    fallback = candidate
-                    break
-            if not fallback and available:
-                fallback = available[0]
-
-            model_name = fallback or desired_model
-
-        # Log which model we're going to use and which models are visible to this API key
-        logger.info("Selected model for generation: %s", model_name)
-        logger.info("Available models (sample): %s", available[:10])
-
-        model = genai.GenerativeModel(model_name)
-
-        try:
-            response = model.generate_content([
-                f"Given the following PDF document, perform this task: {prompt}",
-                {"inline_data": {"mime_type": "application/pdf", "data": file_bytes}},
-            ])
-            return {"translation": response.text}
-        except Exception as e:
-            # If the model isn't available for this account, the underlying
-            # SDK often returns an informative error. Try to list available
-            # models to help the developer debug which models are supported.
-            try:
-                models = [m.name for m in genai.list_models()]
-                msg = f"{str(e)}. Available models: {models[:10]}{'...' if len(models)>10 else ''}"
-            except Exception:
-                msg = str(e)
-            return {"error": msg}
+        return {"translation": response.text}
+        
+    except APIError as e:
+        # Catch errors from the Gemini API (e.g., Invalid API Key, unsupported file type)
+        logger.error("Gemini API Error: %s", str(e))
+        return {"error": f"Gemini API Error (Check API Key/Model): {str(e)}"}
+    
     except Exception as e:
-        return {"error": str(e)}
+        # Catch general errors (e.g., file reading, network)
+        logger.error("General Error: %s", str(e))
+        return {"error": f"Internal Server Error: {str(e)}"}
+        
+    finally:
+        # 4. Cleanup: Delete the file after use to free up space
+        if uploaded_file:
+            try:
+                client.files.delete(name=uploaded_file.name)
+                logger.info("Cleaned up uploaded file: %s", uploaded_file.name)
+            except Exception as e:
+                logger.warning("Failed to delete uploaded file (may be normal if API call failed earlier): %s", str(e))
