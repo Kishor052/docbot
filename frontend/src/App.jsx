@@ -42,7 +42,7 @@ const App = () => {
 
     // Endpoint for your FastAPI backend
     const API_URL = 'https://docbot-o3u2.onrender.com/upload-and-translate/';
-
+    //changed the endpoint
     try {
       const response = await fetch(API_URL, {
         method: 'POST',
