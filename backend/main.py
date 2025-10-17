@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Annotated
 import google.generativeai as genai
-from google.generativeai import APIError 
+#from google.generativeai import APIError 
 import os
 from dotenv import load_dotenv
 import logging
