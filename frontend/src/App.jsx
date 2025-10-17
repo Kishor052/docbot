@@ -41,7 +41,7 @@ const App = () => {
     formData.append('prompt', prompt);
 
     // Endpoint for your FastAPI backend
-    const API_URL = 'https://docbot-o3u2.onrender.com/upload-and-translate/';
+    const API_URL = 'https://docbot-1-0zqp.onrender.com/upload-and-translate/';
     //changed the endpoint
     try {
       const response = await fetch(API_URL, {
