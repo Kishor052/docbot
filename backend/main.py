@@ -26,17 +26,17 @@ logger = logging.getLogger(__name__)
 
 # Enable CORS for communication with the React front-end (allows Vercel deployment)
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], # In production, restrict this to your Vercel URL
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+  CORSMiddleware,
+  allow_origins=["*"], # In production, restrict this to your Vercel URL
+  allow_credentials=True,
+  allow_methods=["*"],
+  allow_headers=["*"],
 )
 
 @app.post("/upload-and-translate/")
 async def upload_and_translate(
-    file: Annotated[UploadFile, File()],
-    prompt: Annotated[str, Form()]
+ file: Annotated[UploadFile, File()],
+ prompt: Annotated[str, Form()]
 ):
     """
     Handles file upload, uploads it to the Gemini File API, queries the model,
